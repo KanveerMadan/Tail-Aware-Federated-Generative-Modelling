@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+  body {
+    @apply bg-ink-900 font-sans text-slate-200 antialiased;
+    font-feature-settings: "cv11", "ss01";
+    overflow-x: hidden;
+  }
+  ::selection {
+    background: rgba(244, 114, 182, 0.35);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  }
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  .glass {
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+  }
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(100deg, #ffffff 0%, #e9d5ff 35%, #f472b6 70%, #22d3ee 100%);
+  }
+  .hairline {
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14), transparent);
+    height: 1px;
+  }
+}
+
+/* Presenter mode: everything a notch larger */
+html.presenter-root {
+  font-size: 17.5px;
+}
+.presenter .presenter-hide {
+  display: none !important;
+}
+
+/* React Flow: dark, chrome-free */
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__pane {
+  cursor: default;
+}
+.react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+.react-flow__edge-path {
+  stroke-linecap: round;
+}
+
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+.edge-flow {
+  stroke-dasharray: 4 8;
+  animation: dash-flow 1.1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edge-flow {
+    animation: none;
+  }
+}
