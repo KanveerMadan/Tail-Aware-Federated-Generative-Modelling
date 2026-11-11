@@ -56,13 +56,18 @@ def load_model_predictions(
         if not fed_dir.exists():
             return None
         
-        # Get specific run or latest
-        runs = list(fed_dir.iterdir())
+        # Latest finished run of this strategy (run ids start with the strategy)
+        strategy = model_type.split("_", 1)[1] if "_" in model_type else ""
+        runs = [
+            d for d in fed_dir.iterdir()
+            if d.is_dir() and d.name.startswith(strategy)
+            and (d / "test_predictions.npy").exists()
+        ]
         if not runs:
+            print(f"Warning: no finished {model_type} run in {fed_dir}")
             return None
         
-        # Use latest run
-        model_dir = sorted(runs)[-1]
+        model_dir = max(runs, key=lambda d: (d / "test_predictions.npy").stat().st_mtime)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
     

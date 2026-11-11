@@ -31,6 +31,7 @@ from src.data.dataset import load_bank_datasets
 from src.models.transformer_ts import create_model
 from src.flwr.client import create_client
 from src.flwr.server_strategy import create_strategy
+from src.flwr.federated_outputs import save_federated_outputs
 from src.privacy.masking import PairwiseMasker, generate_pairwise_seeds, self_test as masking_self_test
 
 
@@ -50,7 +51,8 @@ def write_history(strategy, n_rounds: int, output_dir: Path) -> None:
     print(f"[OK] History saved to: {output_dir / 'history.json'}")
 
 
-def run_server(server_address: str, n_rounds: int, strategy, output_dir: Path):
+def run_server(server_address: str, n_rounds: int, strategy, output_dir: Path,
+               config: Dict, n_clients: int):
     """Run the Flower server; exits non-zero (exception) if any round fails."""
     fl.server.start_server(
         server_address=server_address,
@@ -58,6 +60,8 @@ def run_server(server_address: str, n_rounds: int, strategy, output_dir: Path):
         strategy=strategy,
     )
     write_history(strategy, n_rounds, output_dir)
+    save_federated_outputs(strategy.latest_parameters, config, output_dir,
+                           n_clients, strategy.strategy_name)
 
 
 def run_client(
@@ -122,39 +126,6 @@ def run_client(
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
-
-def save_global_model(
-    parameters,
-    server_round: int,
-    output_dir: Path,
-    config: Dict
-):
-    """Save global model checkpoint."""
-    # Convert parameters to state dict
-    model = create_model(config['model'])
-    
-    keys = list(model.state_dict().keys())
-    model.load_state_dict(
-        {k: torch.from_numpy(np.asarray(v, dtype=np.float32)) for k, v in zip(keys, parameters)},
-        strict=True,
-    )
-    
-    # Save checkpoint
-    checkpoint_path = output_dir / f"round_{server_round:03d}.pt"
-    torch.save({
-        'round': server_round,
-        'model_state_dict': model.state_dict(),
-        'config': config,
-    }, checkpoint_path)
-    
-    # Also save as latest
-    latest_path = output_dir / "latest.pt"
-    torch.save({
-        'round': server_round,
-        'model_state_dict': model.state_dict(),
-        'config': config,
-    }, latest_path)
 
 
 def main():
@@ -295,7 +266,8 @@ def main():
     
     server_process = mp.Process(
         target=run_server,
-        args=(args.server_address, config['federated']['n_rounds'], strategy, output_dir)
+        args=(args.server_address, config['federated']['n_rounds'], strategy, output_dir,
+              config, args.n_clients)
     )
     server_process.start()
     

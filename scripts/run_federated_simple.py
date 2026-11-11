@@ -25,6 +25,7 @@ from src.data.dataset import load_bank_datasets
 from src.models.transformer_ts import create_model
 from src.flwr.client import create_client
 from src.flwr.server_strategy import create_strategy
+from src.flwr.federated_outputs import save_federated_outputs
 from src.privacy.masking import PairwiseMasker, generate_pairwise_seeds, self_test as masking_self_test
 
 
@@ -226,6 +227,9 @@ def main():
     
     with open(output_dir / "history.json", 'w') as f:
         json.dump(history_dict, f, indent=2, default=str)
+    
+    save_federated_outputs(strategy.latest_parameters, config, output_dir,
+                           args.n_clients, strategy.strategy_name)
     
     print(f"\n[OK] Training history saved to: {output_dir / 'history.json'}")
     print(f"[OK] Results saved to: {output_dir}")
