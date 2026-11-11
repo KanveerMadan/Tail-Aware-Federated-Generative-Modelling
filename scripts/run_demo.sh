@@ -19,24 +19,28 @@ echo ""
 echo "This will run the complete pipeline (~3-4 hours on standard laptop)"
 echo ""
 
-# Check if virtual environment is activated
+# Non-interactive: warn only
 if [ -z "$VIRTUAL_ENV" ]; then
-    echo "Warning: No virtual environment detected"
-    echo "   Recommended: activate venv before running"
+    echo "Warning: No virtual environment detected (continuing)"
     echo ""
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
 fi
+
+# Run from the repo root so the relative paths in configs/default.yaml resolve
+cd "$(dirname "$0")/.."
+export FLWR_TELEMETRY_ENABLED=0
+export RAY_USAGE_STATS_ENABLED=0
 
 # Step 1: Fetch financial data
 echo ""
 echo "======================================================================"
 echo "STEP 1/7: Fetching Financial Data from Yahoo Finance"
 echo "======================================================================"
-python scripts/fetch_yfinance.py
+if ! python scripts/fetch_yfinance.py; then
+    echo ""
+    echo "Yahoo Finance fetch failed -> falling back to synthetic data"
+    python scripts/generate_synthetic_data.py
+fi
+echo "Data source: $(head -n 1 data/raw/SOURCE)"
 
 # Step 2: Create synthetic non-IID banks
 echo ""
@@ -44,6 +48,13 @@ echo "======================================================================"
 echo "STEP 2/7: Creating Non-IID Bank Datasets"
 echo "======================================================================"
 python scripts/create_synthetic_banks.py
+
+# GARCH(1,1) baseline for every bank
+echo ""
+echo "======================================================================"
+echo "GARCH(1,1) Baselines (all banks)"
+echo "======================================================================"
+python -c "import sys; sys.path.insert(0, '.'); from src.models.garch_baseline import train_garch_baseline; [train_garch_baseline(b) for b in range(4)]"
 
 # Step 3: Train local models
 echo ""
