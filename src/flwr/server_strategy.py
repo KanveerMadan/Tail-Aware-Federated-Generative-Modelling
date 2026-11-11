@@ -2,6 +2,7 @@
 Custom Flower server strategy for FedProx and FedAvg.
 """
 
+from functools import partial
 from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 
@@ -189,6 +190,48 @@ class FedProxStrategy(fl.server.strategy.FedAvg):
         return aggregated_loss, metrics
 
 
+# Module-level callbacks (not closures) so the strategy pickles under the
+# 'spawn' start method, which run_federated.py uses on macOS.
+
+def fit_config(server_round: int, local_epochs: int) -> Dict[str, Scalar]:
+    """Return training configuration for each round."""
+    return {
+        "local_epochs": local_epochs,
+        "server_round": server_round,
+    }
+
+
+def evaluate_config(server_round: int) -> Dict[str, Scalar]:
+    """Return evaluation configuration for each round."""
+    return {
+        "server_round": server_round,
+    }
+
+
+def fit_metrics_aggregation_fn(metrics: List[Tuple[int, Dict]]) -> Dict:
+    """Aggregate training metrics from clients (weighted by examples)."""
+    total_examples = sum([num_examples for num_examples, _ in metrics])
+    
+    aggregated = {}
+    if metrics and total_examples > 0:
+        train_losses = [m.get("train_loss", 0.0) * n for n, m in metrics]
+        aggregated["train_loss"] = sum(train_losses) / total_examples
+    
+    return aggregated
+
+
+def evaluate_metrics_aggregation_fn(metrics: List[Tuple[int, Dict]]) -> Dict:
+    """Aggregate evaluation metrics from clients (weighted by examples)."""
+    total_examples = sum([num_examples for num_examples, _ in metrics])
+    
+    aggregated = {}
+    if metrics and total_examples > 0:
+        val_losses = [m.get("val_loss", 0.0) * n for n, m in metrics]
+        aggregated["val_loss"] = sum(val_losses) / total_examples
+    
+    return aggregated
+
+
 def create_strategy(
     strategy_name: str,
     initial_parameters: Parameters,
@@ -209,50 +252,12 @@ def create_strategy(
         FedProx strategy instance
     """
     
-    def fit_config(server_round: int):
-        """Return training configuration for each round."""
-        return {
-            "local_epochs": config['training']['local_epochs'],
-            "server_round": server_round,
-        }
-    
-    def evaluate_config(server_round: int):
-        """Return evaluation configuration for each round."""
-        return {
-            "server_round": server_round,
-        }
-    
-    def fit_metrics_aggregation_fn(metrics: List[Tuple[int, Dict]]) -> Dict:
-        """Aggregate training metrics from clients."""
-        # Weighted average of metrics
-        total_examples = sum([num_examples for num_examples, _ in metrics])
-        
-        aggregated = {}
-        if metrics:
-            # Average train loss
-            train_losses = [m.get("train_loss", 0.0) * n for n, m in metrics]
-            aggregated["train_loss"] = sum(train_losses) / total_examples
-        
-        return aggregated
-    
-    def evaluate_metrics_aggregation_fn(metrics: List[Tuple[int, Dict]]) -> Dict:
-        """Aggregate evaluation metrics from clients."""
-        total_examples = sum([num_examples for num_examples, _ in metrics])
-        
-        aggregated = {}
-        if metrics:
-            # Average validation loss
-            val_losses = [m.get("val_loss", 0.0) * n for n, m in metrics]
-            aggregated["val_loss"] = sum(val_losses) / total_examples
-        
-        return aggregated
-    
     strategy = FedProxStrategy(
         fraction_fit=config['federated']['fraction_fit'],
         min_fit_clients=config['federated']['min_fit_clients'],
         min_available_clients=config['federated']['min_available_clients'],
         evaluate_fn=evaluate_fn,
-        on_fit_config_fn=fit_config,
+        on_fit_config_fn=partial(fit_config, local_epochs=config['training']['local_epochs']),
         on_evaluate_config_fn=evaluate_config,
         initial_parameters=initial_parameters,
         fit_metrics_aggregation_fn=fit_metrics_aggregation_fn,
