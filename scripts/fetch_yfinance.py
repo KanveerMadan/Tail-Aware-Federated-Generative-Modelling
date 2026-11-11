@@ -6,6 +6,7 @@ Creates sector-specific datasets with different time periods.
 
 import argparse
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -51,15 +52,22 @@ BANK_CONFIGS = {
 def download_ticker_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
     """Download historical price data for a single ticker."""
     try:
-        data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+        data = yf.download(ticker, start=start_date, end=end_date,
+                           progress=False, auto_adjust=True)
         if data.empty:
             print(f"Warning: No data retrieved for {ticker}")
             return pd.DataFrame()
         
+        # Current yfinance: prices are adjusted via auto_adjust=True, there is
+        # no 'Adj Close' column, and columns may be a (Price, Ticker) MultiIndex.
+        close = data['Close']
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        
         df = pd.DataFrame({
-            'date': data.index,
+            'date': pd.to_datetime(data.index).tz_localize(None),
             'ticker': ticker,
-            'close': data['Adj Close'].values,
+            'close': close.to_numpy(dtype=float),
         })
         
         df['log_return'] = np.log(df['close'] / df['close'].shift(1))
@@ -71,7 +79,7 @@ def download_ticker_data(ticker: str, start_date: str, end_date: str) -> pd.Data
         return pd.DataFrame()
 
 
-def fetch_bank_data(bank_id: int, output_dir: str) -> None:
+def fetch_bank_data(bank_id: int, output_dir: str) -> bool:
     """Fetch and save data for a specific bank."""
     config = BANK_CONFIGS[bank_id]
     
@@ -89,9 +97,10 @@ def fetch_bank_data(bank_id: int, output_dir: str) -> None:
         if not df.empty:
             all_data.append(df)
     
-    if not all_data:
-        print(f"ERROR: No data downloaded for Bank {bank_id}")
-        return
+    if len(all_data) != len(config['tickers']):
+        print(f"ERROR: Only {len(all_data)}/{len(config['tickers'])} tickers "
+              f"downloaded for Bank {bank_id}")
+        return False
     
     combined = pd.concat(all_data, ignore_index=True)
     combined = combined.sort_values(['ticker', 'date']).reset_index(drop=True)
@@ -113,6 +122,7 @@ def fetch_bank_data(bank_id: int, output_dir: str) -> None:
                   f"kurt={returns.kurtosis():.3f}")
     
     print(f"\nSaved to: {output_path}")
+    return True
 
 
 def main():
@@ -142,11 +152,15 @@ def main():
     print(f"Total banks: {len(BANK_CONFIGS)}")
     print(f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    if args.bank_id is not None:
-        fetch_bank_data(args.bank_id, args.output_dir)
-    else:
-        for bank_id in BANK_CONFIGS.keys():
-            fetch_bank_data(bank_id, args.output_dir)
+    bank_ids = [args.bank_id] if args.bank_id is not None else list(BANK_CONFIGS.keys())
+    ok = all([fetch_bank_data(bank_id, args.output_dir) for bank_id in bank_ids])
+    if not ok:
+        print("\nERROR: Data fetching failed (see above).")
+        sys.exit(1)
+    
+    with open(Path(args.output_dir) / "SOURCE", 'w') as f:
+        f.write(f"real\nYahoo Finance via yfinance {yf.__version__} (auto_adjust=True, 'Close')\n"
+                f"fetched {datetime.now().isoformat(timespec='seconds')}\n")
     
     print("\n" + "="*60)
     print("DATA FETCHING COMPLETE")

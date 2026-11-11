@@ -180,6 +180,11 @@ def main():
         for bank_id in range(4):
             generate_bank_data(bank_id, args.output_dir, args.seed)
     
+    with open(Path(args.output_dir) / "SOURCE", 'w') as f:
+        f.write(f"synthetic\nGeometric Brownian motion from scripts/generate_synthetic_data.py "
+                f"(seed={args.seed}); ticker names are labels only\n"
+                f"generated {datetime.now().isoformat(timespec='seconds')}\n")
+    
     print("\n" + "="*60)
     print("SYNTHETIC DATA GENERATION COMPLETE")
     print("="*60)
