@@ -12,6 +12,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!web/src/lib/
 parts/
 sdist/
 var/
@@ -68,3 +69,7 @@ logs/
 tmp/
 temp/
 *.tmp
+
+# Frontend
+web/node_modules/
+web/dist/
