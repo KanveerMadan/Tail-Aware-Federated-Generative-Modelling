@@ -1,0 +1,35 @@
+# Core ML & Deep Learning
+torch==2.1.0
+numpy==1.26.2
+
+# Federated Learning
+flwr==1.6.0
+
+# Data & Financial APIs
+yfinance==0.2.32
+pandas==2.1.3
+
+# Classical Time Series Models
+arch==6.2.0
+
+# Scientific Computing
+scipy==1.11.4
+
+# Visualization
+matplotlib==3.8.2
+seaborn==0.13.0
+
+# Configuration Management
+hydra-core==1.3.2
+PyYAML==6.0.1
+
+# Notebook
+jupyter==1.0.0
+ipykernel==6.27.1
+
+# Utilities
+tqdm==4.66.1
+scikit-learn==1.3.2
+
+# Optional: Model inspection
+torchinfo==1.8.0
