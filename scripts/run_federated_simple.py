@@ -185,7 +185,7 @@ def main():
     # Initialize global model
     print("\nInitializing global model...")
     global_model = create_model(config['model'])
-    initial_parameters = [val.detach().cpu().numpy() for val in global_model.parameters()]
+    initial_parameters = [v.cpu().numpy() for v in global_model.state_dict().values()]
     print(f"Model parameters: {sum(p.numel() for p in global_model.parameters()):,}")
     
     # Create strategy

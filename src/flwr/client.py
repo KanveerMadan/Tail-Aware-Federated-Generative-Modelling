@@ -2,6 +2,7 @@
 Flower client implementation with FedProx and secure aggregation.
 """
 
+from collections import OrderedDict
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 import torch
@@ -60,8 +61,8 @@ class FedProxClient(fl.client.NumPyClient):
         """
         Return model parameters (with optional masking for secure aggregation).
         """
-        # Extract parameters as NumPy arrays
-        params = [p.cpu().detach().numpy() for p in self.model.parameters()]
+        # state_dict order (includes buffers) so set_parameters can load by the same keys
+        params = [v.detach().cpu().numpy() for v in self.model.state_dict().values()]
         
         # Apply masking if coordinator is available
         if self.mask_coordinator is not None:
@@ -73,13 +74,18 @@ class FedProxClient(fl.client.NumPyClient):
         """
         Set model parameters from server.
         """
-        # Store current global parameters for proximal term
-        self.global_params = [p.copy() for p in parameters]
+        # Aggregated/masked arrays may arrive as float64; the model is float32.
+        keys = list(self.model.state_dict().keys())
+        if len(keys) != len(parameters):
+            raise ValueError(f"Expected {len(keys)} arrays, got {len(parameters)}")
+        state_dict = OrderedDict(
+            (k, torch.from_numpy(np.asarray(v, dtype=np.float32)).to(self.device))
+            for k, v in zip(keys, parameters)
+        )
+        self.model.load_state_dict(state_dict, strict=True)
         
-        # Update model
-        params_dict = zip(self.model.parameters(), parameters)
-        for param, new_param in params_dict:
-            param.data = torch.from_numpy(new_param).to(self.device)
+        # Store global trainable parameters for the proximal term
+        self.global_params = [p.detach().clone() for p in self.model.parameters()]
     
     def fit(
         self,
@@ -161,8 +167,7 @@ class FedProxClient(fl.client.NumPyClient):
                         self.model.parameters(),
                         self.global_params
                     ):
-                        global_param_tensor = torch.from_numpy(global_param).to(self.device)
-                        proximal_term += torch.sum((param - global_param_tensor) ** 2)
+                        proximal_term += torch.sum((param - global_param) ** 2)
                     
                     proximal_term = (self.mu / 2) * proximal_term
                 

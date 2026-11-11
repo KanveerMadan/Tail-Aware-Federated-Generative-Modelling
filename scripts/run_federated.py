@@ -117,9 +117,11 @@ def save_global_model(
     # Convert parameters to state dict
     model = create_model(config['model'])
     
-    params_dict = zip(model.parameters(), parameters)
-    for param, new_param in params_dict:
-        param.data = torch.from_numpy(new_param)
+    keys = list(model.state_dict().keys())
+    model.load_state_dict(
+        {k: torch.from_numpy(np.asarray(v, dtype=np.float32)) for k, v in zip(keys, parameters)},
+        strict=True,
+    )
     
     # Save checkpoint
     checkpoint_path = output_dir / f"round_{server_round:03d}.pt"
@@ -249,7 +251,7 @@ def main():
     # Create initial model
     print("\nInitializing global model...")
     initial_model = create_model(config['model'])
-    initial_parameters = [p.cpu().detach().numpy() for p in initial_model.parameters()]
+    initial_parameters = [v.cpu().numpy() for v in initial_model.state_dict().values()]
     
     print(f"Model parameters: {initial_model.count_parameters():,}")
     
