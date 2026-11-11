@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 import flwr as fl
 
 from src.models.transformer_ts import get_loss_function
-from src.privacy.masking import MaskCoordinator
+from src.privacy.masking import PairwiseMasker
 
 
 class FedProxClient(fl.client.NumPyClient):
@@ -33,7 +33,7 @@ class FedProxClient(fl.client.NumPyClient):
         val_loader: DataLoader,
         config: Dict,
         device: torch.device,
-        mask_coordinator: Optional[MaskCoordinator] = None
+        masker: Optional[PairwiseMasker] = None
     ):
         """
         Args:
@@ -43,7 +43,7 @@ class FedProxClient(fl.client.NumPyClient):
             val_loader: Validation data loader
             config: Configuration dictionary
             device: Torch device
-            mask_coordinator: Optional masking coordinator for secure aggregation
+            masker: Optional pairwise masker (holds only this client's seeds)
         """
         self.client_id = client_id
         self.model = model
@@ -51,7 +51,7 @@ class FedProxClient(fl.client.NumPyClient):
         self.val_loader = val_loader
         self.config = config
         self.device = device
-        self.mask_coordinator = mask_coordinator
+        self.masker = masker
         
         self.mu = config['federated'].get('mu', 0.01)
         
@@ -59,16 +59,10 @@ class FedProxClient(fl.client.NumPyClient):
     
     def get_parameters(self, config: Dict) -> List[np.ndarray]:
         """
-        Return model parameters (with optional masking for secure aggregation).
+        Return unmasked model parameters (masking happens in fit).
         """
         # state_dict order (includes buffers) so set_parameters can load by the same keys
-        params = [v.detach().cpu().numpy() for v in self.model.state_dict().values()]
-        
-        # Apply masking if coordinator is available
-        if self.mask_coordinator is not None:
-            params = self.mask_coordinator.apply_mask(params, self.client_id)
-        
-        return params
+        return [v.detach().cpu().numpy() for v in self.model.state_dict().values()]
     
     def set_parameters(self, parameters: List[np.ndarray]) -> None:
         """
@@ -104,9 +98,20 @@ class FedProxClient(fl.client.NumPyClient):
         # Get training configuration
         local_epochs = config.get("local_epochs", self.config['training']['local_epochs'])
         
-        metrics, num_samples = self._train_fedprox(local_epochs)
+        metrics, _ = self._train_fedprox(local_epochs)
         
+        # FedAvg weight n_i = number of training examples
+        num_samples = len(self.train_loader.dataset)
         updated_params = self.get_parameters(config)
+        
+        if self.masker is not None:
+            # Mask n_i * w_i; the server divides the unmasked sum by sum(n_i).
+            server_round = int(config.get("server_round", 0))
+            updated_params = self.masker.mask(
+                [num_samples * np.asarray(p, dtype=np.float64) for p in updated_params],
+                server_round,
+            )
+            metrics["masked"] = True
         
         return updated_params, num_samples, metrics
     
@@ -237,7 +242,7 @@ def create_client(
     val_loader: DataLoader,
     config: Dict,
     device: torch.device,
-    mask_coordinator: Optional[MaskCoordinator] = None
+    masker: Optional[PairwiseMasker] = None
 ) -> FedProxClient:
     """Factory function to create Flower client."""
     return FedProxClient(
@@ -247,5 +252,5 @@ def create_client(
         val_loader=val_loader,
         config=config,
         device=device,
-        mask_coordinator=mask_coordinator
+        masker=masker
     )

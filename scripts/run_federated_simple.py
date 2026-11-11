@@ -8,7 +8,7 @@ import argparse
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 import numpy as np
 import torch
@@ -25,10 +25,10 @@ from src.data.dataset import load_bank_datasets
 from src.models.transformer_ts import create_model
 from src.flwr.client import create_client
 from src.flwr.server_strategy import create_strategy
-from src.privacy.masking import MaskCoordinator
+from src.privacy.masking import PairwiseMasker, generate_pairwise_seeds, self_test as masking_self_test
 
 
-def client_fn(cid: str, config: dict, mask_coordinator: Optional[MaskCoordinator] = None):
+def client_fn(cid: str, config: dict, peer_seeds: Optional[Dict[int, int]] = None):
     """Create a Flower client for simulation."""
     client_id = int(cid)
     
@@ -69,7 +69,7 @@ def client_fn(cid: str, config: dict, mask_coordinator: Optional[MaskCoordinator
         val_loader=val_loader,
         config=config,
         device=device,
-        mask_coordinator=mask_coordinator
+        masker=PairwiseMasker(client_id, peer_seeds) if peer_seeds is not None else None
     )
 
 
@@ -160,27 +160,13 @@ def main():
     
     # Initialize secure aggregation
     use_masking = not args.no_masking
-    mask_coordinator = None
+    client_seeds = None
     
     if use_masking:
-        print("\nInitializing secure aggregation...")
-        mask_coordinator = MaskCoordinator(
-            n_clients=args.n_clients,
-            seed=config['random_seed']
-        )
-        
-        # Test mask cancellation
-        temp_model = create_model(config['model'])
-        param_shapes = [tuple(p.shape) for p in temp_model.parameters()]
-        
-        print("Testing mask cancellation...")
-        test_masks = [mask_coordinator.get_mask(i, param_shapes) for i in range(args.n_clients)]
-        for param_idx in range(min(5, len(param_shapes))):  # Test first 5 parameters
-            summed = sum(test_masks[c][param_idx] for c in range(args.n_clients))
-            max_residual = np.abs(summed).max()
-            print(f"  Parameter {param_idx}: max residual = {max_residual:.2e}")
-        
-        print("[OK] Secure aggregation initialized")
+        # Pairwise secrets live only in the client_fn closure, never in the strategy.
+        print("\nInitializing secure aggregation (pairwise masking)...")
+        masking_self_test(n_clients=args.n_clients)
+        client_seeds = generate_pairwise_seeds(args.n_clients)
     
     # Initialize global model
     print("\nInitializing global model...")
@@ -194,12 +180,13 @@ def main():
         strategy_name=args.strategy,
         initial_parameters=ndarrays_to_parameters(initial_parameters),
         config=config,
-        evaluate_fn=None
+        evaluate_fn=None,
+        masked=use_masking,
     )
     
     # Create client function for simulation
     def wrapped_client_fn(cid: str):
-        return client_fn(cid, config, mask_coordinator)
+        return client_fn(cid, config, client_seeds[int(cid)] if use_masking else None)
     
     # Run simulation
     print(f"\nStarting federated training simulation...")

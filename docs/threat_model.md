@@ -26,7 +26,7 @@ This document describes the threat model, security assumptions, and limitations 
 └────────┬────────┘      └────────┬────────┘      └────────┬────────┘
          │                        │                        │
          │    Masked Updates      │    Masked Updates      │
-         │    (w + mask)          │    (w + mask)          │
+         │    (n·w + mask)        │    (n·w + mask)        │
          │                        │                        │
          └────────────────────────┼────────────────────────┘
                                   │
@@ -51,11 +51,14 @@ This document describes the threat model, security assumptions, and limitations 
 - Raw training data never leaves client institutions
 - Only model updates are transmitted (not data)
 
-**Update-Level Privacy**
-- Individual client updates are masked before transmission
-- Server receives masked updates: `w_client + mask_client`
-- After aggregation, masks cancel: `Σ(w_i + mask_i) = Σw_i`
-- Server cannot recover individual client updates from masked aggregates
+**Update-Level Privacy (simulated)**
+- Each client masks its sample-weighted parameters before sending them
+- Server receives `n_i·w_i + mask_i`; the pairwise masks cancel in the sum:
+  `Σ(n_i·w_i + mask_i) = Σ n_i·w_i`, and `Σ n_i·w_i / Σ n_i` is the FedAvg mean
+- The server never holds any pairwise seed, so it cannot remove the mask from a
+  single update (as long as no client colludes with it)
+- This is a single-machine **simulation** of the idea, not a deployable protocol
+  (see 6.2 and 7.1)
 
 **Non-IID Handling**
 - FedProx algorithm stabilizes training under heterogeneous data distributions
@@ -95,9 +98,12 @@ This document describes the threat model, security assumptions, and limitations 
    - MVP simplification: no client dropout handling
    - In production, would need robust dropout recovery protocol
 
-3. **Secure random number generation**
-   - Masks are generated using cryptographically secure PRNGs
-   - Pairwise seeds are not leaked
+3. **Seed handling (simulation)**
+   - Pairwise seeds are drawn with Python's `secrets` module in the client
+     launch code and handed to each client directly; there is **no real key
+     exchange** (a real system would derive them with Diffie-Hellman)
+   - The mask stream itself is NumPy's PCG64 generator, which is fast but not a
+     cryptographic PRG
 
 4. **Semi-honest participants**
    - All parties follow the protocol
@@ -167,16 +173,39 @@ This document describes the threat model, security assumptions, and limitations 
 
 **Key Property:** Server never sees individual `w_i`, only the aggregate.
 
-### 6.2 Implementation Details
+### 6.2 Implementation Details (what the code actually does)
 
-- **Mask Coordinator:** Centralized coordinator generates all pairwise masks (single-machine simplification)
-- **Per-Tensor Masking:** Masks match each parameter tensor's shape exactly
-- **Verification:** `test_cancellation()` method verifies `Σ masks = 0`
+Code: `src/privacy/masking.py`, `src/flwr/client.py`, `src/flwr/server_strategy.py`.
+
+- **Seeds:** `generate_pairwise_seeds(n)` runs in the client launch code
+  (`scripts/run_federated.py`, `scripts/run_federated_simple.py`). Client *i*
+  gets only `seeds[i]` = `{peer: seed}`. Nothing seed-related is passed to the
+  strategy/server.
+- **Masking:** `PairwiseMasker.mask()` adds `+PRG(seed_ij, round)` for each peer
+  `j > i` and `-PRG(seed_ij, round)` for each `j < i`, scaled by `MASK_SCALE`
+  (1e4), on every `state_dict` array of `n_i·w_i`. Masks change every round.
+- **Aggregation:** `FedProxStrategy.aggregate_fit` (with `masked=True`) sums the
+  masked arrays and divides by `Σ n_i` (`unmask_weighted_average`), then casts
+  to float32.
+- **Fail-stop:** any failure or a missing client stops the run with an error,
+  because masks only cancel when every client reports.
+- **Verification:** `python src/privacy/masking.py` asserts that the sum of masked
+  updates equals the sum of unmasked ones and that each masked update is far
+  from its real value.
+
+**Honest limits of this simulation:**
+- No real key exchange: seeds are generated in one process and handed out
+- No dropout recovery: one missing client means the round cannot be unmasked
+- Real-valued (float64) masks, not finite-field arithmetic, so a masked update
+  still leaks a little statistical information and sums carry ~1e-12 rounding error
+- Honest-but-curious server only; no protection if clients collude with the server
+- `n_i` (sample counts) and training metrics are sent in the clear
 
 **Production Requirements:**
-- Replace centralized coordinator with pairwise secure channels
-- Implement dropout recovery (requires erasure coding or threshold schemes)
-- Add authentication and integrity checks
+- Pairwise key agreement over authenticated channels
+- Dropout recovery (secret-shared seeds, as in Bonawitz et al. 2017)
+- Finite-field masking with a cryptographic PRG
+- Authentication and integrity checks
 
 ---
 
@@ -195,7 +224,7 @@ This document describes the threat model, security assumptions, and limitations 
    - Trade-off: DP adds noise that degrades model utility
 
 3. **No Client Dropout Handling**
-   - Assumes all clients participate in every round
+   - Assumes all clients participate in every round; the run stops otherwise
    - Real-world: clients may disconnect, fail, or be slow
    - Robust protocols use secret sharing or Lagrange interpolation
 

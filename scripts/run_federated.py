@@ -12,7 +12,7 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 import time
-from typing import Dict
+from typing import Dict, Optional
 
 # Fix for macOS multiprocessing
 mp.set_start_method('fork', force=True)
@@ -31,7 +31,7 @@ from src.data.dataset import load_bank_datasets
 from src.models.transformer_ts import create_model
 from src.flwr.client import create_client
 from src.flwr.server_strategy import create_strategy
-from src.privacy.masking import MaskCoordinator
+from src.privacy.masking import PairwiseMasker, generate_pairwise_seeds, self_test as masking_self_test
 
 
 def run_server(server_address: str, n_rounds: int, strategy):
@@ -47,8 +47,7 @@ def run_client(
     client_id: int,
     config: Dict,
     server_address: str,
-    use_masking: bool,
-    mask_coordinator: MaskCoordinator = None
+    peer_seeds: Optional[Dict[int, int]] = None
 ):
     """Run a single client process."""
     try:
@@ -89,7 +88,7 @@ def run_client(
             val_loader=val_loader,
             config=config,
             device=device,
-            mask_coordinator=mask_coordinator if use_masking else None
+            masker=PairwiseMasker(client_id, peer_seeds) if peer_seeds is not None else None
         )
         
         # Connect to server
@@ -232,21 +231,15 @@ def main():
     print(f"Server: {args.server_address}")
     print("="*60)
     
-    # Create mask coordinator for secure aggregation
+    # Pairwise secrets for secure aggregation. Created here in the client launch
+    # code; each client process gets only its own seeds, the server gets none.
     use_masking = not args.no_masking
-    mask_coordinator = None
+    client_seeds = None
     
     if use_masking:
-        print("\nInitializing secure aggregation...")
-        mask_coordinator = MaskCoordinator(
-            n_clients=args.n_clients,
-            seed=config['random_seed']
-        )
-        
-        # Test masking
-        model = create_model(config['model'])
-        param_shapes = [p.shape for p in model.parameters()]
-        mask_coordinator.test_cancellation(param_shapes)
+        print("\nInitializing secure aggregation (pairwise masking)...")
+        masking_self_test(n_clients=args.n_clients)
+        client_seeds = generate_pairwise_seeds(args.n_clients)
     
     # Create initial model
     print("\nInitializing global model...")
@@ -275,7 +268,8 @@ def main():
         strategy_name=args.strategy,
         initial_parameters=ndarrays_to_parameters(initial_parameters),
         config=config,
-        evaluate_fn=None
+        evaluate_fn=None,
+        masked=use_masking,
     )
     
     # Start server in background
@@ -297,7 +291,8 @@ def main():
     for client_id in range(args.n_clients):
         p = mp.Process(
             target=run_client,
-            args=(client_id, config, args.server_address, use_masking, mask_coordinator)
+            args=(client_id, config, args.server_address,
+                  client_seeds[client_id] if use_masking else None)
         )
         p.start()
         client_processes.append(p)

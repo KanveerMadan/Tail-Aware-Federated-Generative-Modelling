@@ -16,6 +16,8 @@ from flwr.common import (
 )
 from flwr.server.client_proxy import ClientProxy
 
+from src.privacy.masking import unmask_weighted_average
+
 
 class FedProxStrategy(fl.server.strategy.FedAvg):
     """
@@ -42,7 +44,8 @@ class FedProxStrategy(fl.server.strategy.FedAvg):
         initial_parameters: Optional[Parameters] = None,
         fit_metrics_aggregation_fn: Optional[callable] = None,
         evaluate_metrics_aggregation_fn: Optional[callable] = None,
-        strategy_name: str = "FedProx"
+        strategy_name: str = "FedProx",
+        masked: bool = False,
     ):
         """
         Args:
@@ -50,6 +53,7 @@ class FedProxStrategy(fl.server.strategy.FedAvg):
             min_fit_clients: Minimum number of clients for training
             min_available_clients: Minimum total clients required
             strategy_name: Name of strategy ("FedProx" or "FedAvg")
+            masked: Clients send pairwise-masked n_i * w_i (secure aggregation)
         """
         super().__init__(
             fraction_fit=fraction_fit,
@@ -67,6 +71,7 @@ class FedProxStrategy(fl.server.strategy.FedAvg):
         )
         
         self.strategy_name = strategy_name
+        self.masked = masked
         self.current_round = 0
     
     def configure_fit(
@@ -123,10 +128,26 @@ class FedProxStrategy(fl.server.strategy.FedAvg):
         if failures:
             print(f"Round {server_round}: {len(failures)} client failures")
         
-        # Weighted averaging (standard FedAvg)
-        aggregated_parameters, metrics = super().aggregate_fit(
-            server_round, results, failures
-        )
+        if self.masked:
+            # Each client sent n_i * w_i + mask_i. The masks cancel in the sum,
+            # so sum / sum(n_i) is the FedAvg weighted mean. The server never
+            # holds any pairwise seed, so it cannot unmask a single update.
+            masked_updates = [parameters_to_ndarrays(r.parameters) for _, r in results]
+            num_examples = [r.num_examples for _, r in results]
+            averaged = unmask_weighted_average(masked_updates, num_examples)
+            aggregated_parameters = ndarrays_to_parameters(
+                [a.astype(np.float32) for a in averaged]
+            )
+            metrics = {}
+            if self.fit_metrics_aggregation_fn is not None:
+                metrics = self.fit_metrics_aggregation_fn(
+                    [(r.num_examples, r.metrics) for _, r in results]
+                )
+        else:
+            # Weighted averaging (standard FedAvg)
+            aggregated_parameters, metrics = super().aggregate_fit(
+                server_round, results, failures
+            )
         
         # Extract training metrics
         train_losses = [r.metrics.get("train_loss", 0.0) for _, r in results]
@@ -172,7 +193,8 @@ def create_strategy(
     strategy_name: str,
     initial_parameters: Parameters,
     config: Dict,
-    evaluate_fn: Optional[callable] = None
+    evaluate_fn: Optional[callable] = None,
+    masked: bool = False,
 ) -> FedProxStrategy:
     """
     Factory function to create strategy.
@@ -235,7 +257,8 @@ def create_strategy(
         initial_parameters=initial_parameters,
         fit_metrics_aggregation_fn=fit_metrics_aggregation_fn,
         evaluate_metrics_aggregation_fn=evaluate_metrics_aggregation_fn,
-        strategy_name=strategy_name.upper()
+        strategy_name=strategy_name.upper(),
+        masked=masked,
     )
     
     return strategy
