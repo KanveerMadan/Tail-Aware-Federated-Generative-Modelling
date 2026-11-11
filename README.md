@@ -125,6 +125,29 @@ Computes metrics:
 - **Volatility clustering** (ACF of squared residuals)
 - **Tail calibration** (Kupiec backtest)
 
+## Frontend
+
+A presentation web app in `web/` walks through the project step by step: data, the four banks, the privacy problem, how training works, an animated replay of the federated rounds, a bank's-view vs server's-view of the masking, results, per-bank predictions and honest takeaways. It reads only JSON exported from the pipeline outputs, never trains or fetches anything, and works fully offline (fonts, icons and libraries are bundled).
+
+Stack: React 18, Vite, TypeScript, Tailwind CSS, Radix UI (shadcn-style components), Framer Motion, Apache ECharts, React Flow, zustand, react-router and react-hotkeys-hook.
+
+```bash
+# 1. Run the pipeline (once), then export its results for the site
+bash scripts/run_demo.sh
+python scripts/export_web_data.py        # writes web/public/data/*.json
+
+# 2. Install and run (Node 18+)
+cd web
+npm install
+npm run dev                              # dev server: http://127.0.0.1:5173
+
+# or the production build
+npm run build
+npm run preview                          # built site: http://127.0.0.1:4173
+```
+
+Keys: ← / → move between steps, the top-right button enters presenter mode (fullscreen, larger type; Space also advances, Esc exits), and the `</>` button opens the command and source code behind each step. If a JSON file is missing, that screen shows a "not available" card instead of numbers.
+
 ## Project Structure
 
 ```
