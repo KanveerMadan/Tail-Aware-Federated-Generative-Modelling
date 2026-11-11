@@ -34,13 +34,30 @@ from src.flwr.server_strategy import create_strategy
 from src.privacy.masking import PairwiseMasker, generate_pairwise_seeds, self_test as masking_self_test
 
 
-def run_server(server_address: str, n_rounds: int, strategy):
-    """Run the Flower server."""
+def write_history(strategy, n_rounds: int, output_dir: Path) -> None:
+    """Write history.json, or fail if any round is missing or incomplete."""
+    rounds = strategy.round_log
+    if len(rounds) != n_rounds or any(
+        r["n_failures"] or r.get("eval_n_failures", 1) or "val_loss" not in r for r in rounds
+    ):
+        raise RuntimeError(
+            f"Federated run incomplete: {len(rounds)}/{n_rounds} complete rounds; "
+            "not writing history.json"
+        )
+    with open(output_dir / "history.json", "w") as f:
+        json.dump({"strategy": strategy.strategy_name, "n_rounds": n_rounds,
+                   "masked": strategy.masked, "rounds": rounds}, f, indent=2)
+    print(f"[OK] History saved to: {output_dir / 'history.json'}")
+
+
+def run_server(server_address: str, n_rounds: int, strategy, output_dir: Path):
+    """Run the Flower server; exits non-zero (exception) if any round fails."""
     fl.server.start_server(
         server_address=server_address,
         config=fl.server.ServerConfig(num_rounds=n_rounds),
         strategy=strategy,
     )
+    write_history(strategy, n_rounds, output_dir)
 
 
 def run_client(
@@ -104,6 +121,7 @@ def run_client(
         print(f"Client {client_id} error: {e}")
         import traceback
         traceback.print_exc()
+        sys.exit(1)
 
 
 def save_global_model(
@@ -277,7 +295,7 @@ def main():
     
     server_process = mp.Process(
         target=run_server,
-        args=(args.server_address, config['federated']['n_rounds'], strategy)
+        args=(args.server_address, config['federated']['n_rounds'], strategy, output_dir)
     )
     server_process.start()
     
@@ -304,10 +322,22 @@ def main():
     for p in client_processes:
         p.join()
     
-    # Wait for server to finish
-    server_process.join(timeout=10)
+    # Wait for server to finish (it writes history.json and the results)
+    server_process.join(timeout=900)
     if server_process.is_alive():
         server_process.terminate()
+        server_process.join()
+    
+    client_codes = [p.exitcode for p in client_processes]
+    if server_process.exitcode != 0 or any(c != 0 for c in client_codes):
+        print("\n" + "="*60)
+        print("FEDERATED TRAINING FAILED")
+        print("="*60)
+        print(f"Server exit code: {server_process.exitcode}, client exit codes: {client_codes}")
+        sys.exit(1)
+    if not (output_dir / "history.json").exists():
+        print(f"ERROR: {output_dir / 'history.json'} was not written")
+        sys.exit(1)
     
     print("\n" + "="*60)
     print("FEDERATED TRAINING COMPLETE")

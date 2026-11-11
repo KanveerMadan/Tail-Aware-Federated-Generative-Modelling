@@ -205,12 +205,23 @@ def main():
     print("FEDERATED TRAINING COMPLETE")
     print("="*60)
     
-    # Save history  
+    # Stop loudly unless every round had all results and no failures
+    rounds = strategy.round_log
+    n_rounds = config['federated']['n_rounds']
+    if len(rounds) != n_rounds or any(
+        r["n_failures"] or r.get("eval_n_failures", 1) or "val_loss" not in r for r in rounds
+    ):
+        print(f"ERROR: federated run incomplete ({len(rounds)}/{n_rounds} complete rounds); "
+              "not writing history.json")
+        sys.exit(1)
+    
     history_dict = {
-        "losses_distributed": history.losses_distributed if hasattr(history, 'losses_distributed') else [],
-        "metrics_distributed": history.metrics_distributed if hasattr(history, 'metrics_distributed') else [],
-        "losses_centralized": history.losses_centralized if hasattr(history, 'losses_centralized') else [],
-        "metrics_centralized": history.metrics_centralized if hasattr(history, 'metrics_centralized') else [],
+        "strategy": strategy.strategy_name,
+        "n_rounds": n_rounds,
+        "masked": strategy.masked,
+        "rounds": rounds,
+        "losses_distributed": history.losses_distributed,
+        "metrics_distributed": history.metrics_distributed,
     }
     
     with open(output_dir / "history.json", 'w') as f:
@@ -218,7 +229,7 @@ def main():
     
     print(f"\n[OK] Training history saved to: {output_dir / 'history.json'}")
     print(f"[OK] Results saved to: {output_dir}")
-    print(f"\n[OK] Completed {len(history_dict.get('losses_distributed', []))} federated rounds")
+    print(f"\n[OK] Completed {len(rounds)} federated rounds")
     print("\nNext step: python scripts/run_federated_simple.py --strategy fedavg --n_rounds 10")
     print("          or python scripts/evaluate.py")
 

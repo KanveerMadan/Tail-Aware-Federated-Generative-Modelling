@@ -20,6 +20,21 @@ from flwr.server.client_proxy import ClientProxy
 from src.privacy.masking import unmask_weighted_average
 
 
+class FederatedRoundError(RuntimeError):
+    """A round had failures or missing clients; the run must stop."""
+
+
+def _require_all_clients(stage, server_round, results, failures, expected) -> None:
+    """Stop the run unless every expected client returned a result."""
+    print(f"Round {server_round} ({stage}): {len(results)} results, {len(failures)} failures")
+    if failures or len(results) < expected:
+        details = "; ".join(repr(f if isinstance(f, BaseException) else "client error") for f in failures)
+        raise FederatedRoundError(
+            f"Round {server_round} {stage}: {len(results)} results, {len(failures)} failures "
+            f"(expected {expected} results, 0 failures). Stopping. {details}"
+        )
+
+
 class FedProxStrategy(fl.server.strategy.FedAvg):
     """
     Custom strategy for FedProx.
@@ -74,6 +89,9 @@ class FedProxStrategy(fl.server.strategy.FedAvg):
         self.strategy_name = strategy_name
         self.masked = masked
         self.current_round = 0
+        # One entry per completed round; written to history.json by the runners
+        self.round_log: List[Dict] = []
+        self.latest_parameters: Optional[List[np.ndarray]] = None
     
     def configure_fit(
         self,
@@ -122,12 +140,7 @@ class FedProxStrategy(fl.server.strategy.FedAvg):
         - Aggregation cancels masks automatically
         - Server receives sum of updates without seeing individual updates
         """
-        if not results:
-            return None, {}
-        
-        # Log failures
-        if failures:
-            print(f"Round {server_round}: {len(failures)} client failures")
+        _require_all_clients("fit", server_round, results, failures, self.min_fit_clients)
         
         if self.masked:
             # Each client sent n_i * w_i + mask_i. The masks cancel in the sum,
@@ -156,6 +169,15 @@ class FedProxStrategy(fl.server.strategy.FedAvg):
         
         metrics["train_loss"] = avg_train_loss
         
+        self.latest_parameters = parameters_to_ndarrays(aggregated_parameters)
+        self.round_log.append({
+            "round": server_round,
+            "n_results": len(results),
+            "n_failures": len(failures),
+            "train_loss": metrics["train_loss"],
+            "num_examples": [r.num_examples for _, r in results],
+        })
+        
         # Print progress
         print(f"Round {server_round} - Strategy: {self.strategy_name} - "
               f"Avg Train Loss: {avg_train_loss:.6f}")
@@ -169,8 +191,7 @@ class FedProxStrategy(fl.server.strategy.FedAvg):
         failures: List[Union[Tuple[ClientProxy, EvaluateRes], BaseException]],
     ) -> Tuple[Optional[float], Dict[str, Scalar]]:
         """Aggregate evaluation results from clients."""
-        if not results:
-            return None, {}
+        _require_all_clients("evaluate", server_round, results, failures, self.min_evaluate_clients)
         
         # Weighted averaging of losses
         losses = [r.loss * r.num_examples for _, r in results]
@@ -186,6 +207,12 @@ class FedProxStrategy(fl.server.strategy.FedAvg):
             metrics["val_loss"] = float(np.mean(val_losses))
         
         print(f"Round {server_round} - Avg Val Loss: {metrics.get('val_loss', 0.0):.6f}")
+        
+        for entry in self.round_log:
+            if entry["round"] == server_round:
+                entry["val_loss"] = float(aggregated_loss)
+                entry["eval_n_results"] = len(results)
+                entry["eval_n_failures"] = len(failures)
         
         return aggregated_loss, metrics
 
@@ -256,6 +283,8 @@ def create_strategy(
         fraction_fit=config['federated']['fraction_fit'],
         min_fit_clients=config['federated']['min_fit_clients'],
         min_available_clients=config['federated']['min_available_clients'],
+        min_evaluate_clients=config['federated']['min_fit_clients'],
+        accept_failures=False,
         evaluate_fn=evaluate_fn,
         on_fit_config_fn=partial(fit_config, local_epochs=config['training']['local_epochs']),
         on_evaluate_config_fn=evaluate_config,
