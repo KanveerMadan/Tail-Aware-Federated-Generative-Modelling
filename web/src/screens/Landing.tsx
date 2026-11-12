@@ -10,6 +10,10 @@ import { int } from "@/lib/format";
 
 const ease = [0.22, 1, 0.36, 1] as const;
 
+// Project name as presented (second line gets the gradient)
+const TITLE_LINES = ["Tail-Aware Federated Generative Modelling", "of Financial Markets"];
+const PROJECT_NAME = "Tail-Aware Federated Generative Modelling";
+
 export default function Landing() {
   const navigate = useNavigate();
   const { data: settings } = useData("settings.json");
@@ -17,8 +21,6 @@ export default function Landing() {
   const { data: source } = useData("source.json");
   const { data: fed } = useData("federated.json");
 
-  const title = settings?.title?.replace(/\s+MVP$/i, "") ?? "Federated Learning for Financial Markets";
-  const words = title.split(" ");
   const nRounds = fed?.strategies.fedprox?.n_rounds ?? fed?.strategies.fedavg?.n_rounds;
 
   const facts = [
@@ -39,7 +41,7 @@ export default function Landing() {
       >
         <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-1.5 text-sm text-slate-300 backdrop-blur">
           <Network className="h-4 w-4 text-server" />
-          {settings?.project ?? "TGFL Market Scenario Simulator"}
+          {PROJECT_NAME}
         </span>
         {source && (
           <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-1.5 text-sm text-slate-300">
@@ -49,18 +51,25 @@ export default function Landing() {
         )}
       </motion.div>
 
-      <h1 className="max-w-[1350px] font-display text-hero font-semibold text-white">
-        {words.map((w, i) => (
-          <motion.span
-            key={i}
-            initial={{ opacity: 0, y: 40, filter: "blur(10px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            transition={{ duration: 0.9, delay: 0.15 + i * 0.07, ease }}
-            className={i >= words.length - 3 ? "text-gradient mr-[0.25em] inline-block" : "mr-[0.25em] inline-block"}
-          >
-            {w}
-          </motion.span>
-        ))}
+      <h1 className="font-display text-[clamp(2.5rem,4.2vw,4.75rem)] font-semibold leading-[1.06] tracking-[-0.035em] text-white">
+        {TITLE_LINES.map((line, li) => {
+          const offset = TITLE_LINES.slice(0, li).reduce((n, l) => n + l.split(" ").length, 0);
+          return (
+            <span key={li} className="block">
+              {line.split(" ").map((w, i) => (
+                <motion.span
+                  key={i}
+                  initial={{ opacity: 0, y: 40, filter: "blur(10px)" }}
+                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                  transition={{ duration: 0.9, delay: 0.15 + (offset + i) * 0.07, ease }}
+                  className={li === TITLE_LINES.length - 1 ? "text-gradient mr-[0.25em] inline-block pb-[0.08em]" : "mr-[0.25em] inline-block"}
+                >
+                  {w}
+                </motion.span>
+              ))}
+            </span>
+          );
+        })}
       </h1>
 
       <motion.p

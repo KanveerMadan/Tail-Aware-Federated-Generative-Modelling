@@ -18,8 +18,8 @@ export function TopBar({ stepIndex, onPresenter }: { stepIndex: number | null; o
             <Network className="h-[18px] w-[18px] text-white" />
           </div>
           <div className="leading-tight">
-            <div className="font-display text-[0.98rem] font-semibold tracking-tight text-white">TGFL</div>
-            <div className="text-[0.68rem] uppercase tracking-[0.18em] text-muted">Market Scenario Simulator</div>
+            <div className="font-display text-[0.98rem] font-semibold tracking-tight text-white">Tail-Aware FL</div>
+            <div className="text-[0.68rem] uppercase tracking-[0.18em] text-muted">Federated Generative Modelling</div>
           </div>
         </Link>
 
